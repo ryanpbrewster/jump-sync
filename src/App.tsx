@@ -5,30 +5,35 @@ import styled from 'styled-components';
 
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(myReducer, EMPTY_STATE);
-  const putEntry = useCallback((raw: string) => {
-    const [k, value] = raw.split('=');
-    const [namespace, key] = k.split('/');
-    dispatch({type: 'put_entry', namespace, key, value});
-  }, [dispatch]);
   return (
     <div className="App">
       <Backend state={state} />
       <Client state={state} />
-      <EntryInput onSubmit={putEntry} />
+      <EntryInput onSubmit={dispatch} />
     </div>
   );
 };
 
+const PUT_ENTRY_REGEX = /(^[a-z]+)\/([a-z]+)\s*=\s*([a-z]+)$/;
 interface EntryInputProps {
-  readonly onSubmit: (raw: string) => void;
+  readonly onSubmit: (action: PutEntry) => void;
 }
 const EntryInput: React.FC<EntryInputProps> = ({onSubmit}) => {
   const [value, setValue] = useState('');
+  const onKeyDown = (evt: React.KeyboardEvent) => {
+    if (evt.key === 'Enter') {
+      const m = PUT_ENTRY_REGEX.exec(value);
+      if (m) {
+        onSubmit({type: 'put_entry', namespace: m[1], key: m[2], value: m[3]});
+        setValue('');
+      }
+    }
+  }
   return <input
     placeholder="name/key=value"
     onChange={(evt) => setValue(evt.target.value)}
-    onKeyDown={(evt: React.KeyboardEvent) => evt.key === 'Enter' && onSubmit(value)}>
-    </input>
+    onKeyDown={onKeyDown}
+    value={value}></input>
 };
 
 interface BackendProps {
@@ -36,8 +41,19 @@ interface BackendProps {
 }
 const Backend: React.FC<BackendProps> = ({state}) => {
   return <BackendWrapper>
-    {state.backend.entrySeq().map(([name, obj]) => name)}
+    {state.backend.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
   </BackendWrapper>
+};
+
+interface NamespaceProps {
+  readonly name: string;
+  readonly obj: IMap<string, Entry>;
+}
+const Namespace: React.FC<NamespaceProps> = ({name, obj}) => {
+  return <NamespaceWrapper>
+    <b>{name}</b>
+    {obj.entrySeq().map(([key, entry]) => <p key={key}>{key} = {entry.value}/{entry.seqno}</p>)}
+  </NamespaceWrapper>
 };
 
 interface ClientProps {
@@ -78,6 +94,16 @@ function myReducer(state: State, action: Action): State {
 }
 
 const BackendWrapper = styled.div`
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+`;
+
+const NamespaceWrapper = styled.div`
+  border: solid 1px black;
+  border-radius: 20px;
+  margin: 8px;
+  padding: 8px;
 `;
 
 export default App;
