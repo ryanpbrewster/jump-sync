@@ -7,14 +7,15 @@ const App: React.FC = () => {
   const [state, dispatch] = useReducer(myReducer, EMPTY_STATE);
   return (
     <div className="App">
-      <Backend state={state} />
-      <Client state={state} />
+      <Backend state={state.backend} dispatch={dispatch} />
       <EntryInput onSubmit={dispatch} />
+      <hr />
+      <Client state={state.client} dispatch={dispatch} />
     </div>
   );
 };
 
-const PUT_ENTRY_REGEX = /(^[a-z]+)\/([a-z]+)\s*=\s*([a-z]+)$/;
+const PUT_ENTRY_REGEX = /^([a-z]+)\/([a-z]+)\s*=\s*([a-z]+)$/;
 interface EntryInputProps {
   readonly onSubmit: (action: PutEntry) => void;
 }
@@ -37,11 +38,12 @@ const EntryInput: React.FC<EntryInputProps> = ({onSubmit}) => {
 };
 
 interface BackendProps {
-  readonly state: State;
+  readonly state: BackendState;
+  readonly dispatch: (action: Action) => void;
 }
 const Backend: React.FC<BackendProps> = ({state}) => {
   return <BackendWrapper>
-    {state.backend.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
+    {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
   </BackendWrapper>
 };
 
@@ -52,19 +54,32 @@ interface NamespaceProps {
 const Namespace: React.FC<NamespaceProps> = ({name, obj}) => {
   return <NamespaceWrapper>
     <b>{name}</b>
-    {obj.entrySeq().map(([key, entry]) => <p key={key}>{key} = {entry.value}/{entry.seqno}</p>)}
+    {obj.entrySeq().map(([key, entry]) => <p key={key}>{key} = {entry.value}<SeqnoWrapper>{entry.seqno}</SeqnoWrapper></p>)}
   </NamespaceWrapper>
 };
 
 interface ClientProps {
-  readonly state: State;
+  readonly state: ClientState;
+  readonly dispatch: (action: Action) => void;
 }
-const Client: React.FC<ClientProps> = ({state}) => {
-  return <p>Client</p>;
+const Client: React.FC<ClientProps> = ({state, dispatch}) => {
+  return <ClientWrapper>
+    <p>Client: {state.startedSeqno}..{state.nextSeqno}</p>
+    <button onClick={() => dispatch({type: 'jump'})}>Jump ahead</button>
+  </ClientWrapper>;
 };
 
 interface State {
-  readonly backend: IMap<string, IMap<string, Entry>>;
+  readonly backend: BackendState;
+  readonly client: ClientState;
+}
+interface BackendState {
+  readonly items: IMap<string, IMap<string, Entry>>;
+  readonly nextSeqno: number;
+}
+interface ClientState {
+  readonly items: IMap<string, IMap<string, Entry>>;
+  readonly startedSeqno: number;
   readonly nextSeqno: number;
 }
 interface Entry {
@@ -73,22 +88,37 @@ interface Entry {
   readonly value: string;
   readonly seqno: number;
 }
-type Action = PutEntry;
+type Action = PutEntry | JumpAhead;
 interface PutEntry {
   readonly type: 'put_entry';
   readonly namespace: string;
   readonly key: string;
   readonly value: string;
 }
+interface JumpAhead {
+  readonly type: 'jump';
+}
 
-const EMPTY_STATE: State = {backend: IMap(), nextSeqno: 1};
+const EMPTY_STATE: State = {
+  backend: {items: IMap(), nextSeqno: 1},
+  client: {items: IMap(), startedSeqno: 0, nextSeqno: 0},
+};
 function myReducer(state: State, action: Action): State {
   switch (action.type) {
     case 'put_entry': {
-      const entry: Entry = { namespace: action.namespace, key: action.key, value: action.value, seqno: state.nextSeqno };
-      const named = state.backend.get(action.namespace) || IMap();
-      const updated = state.backend.set(action.namespace, named.set(action.key, entry));
-      return {...state, nextSeqno: state.nextSeqno + 1, backend: updated};
+      const entry: Entry = { namespace: action.namespace, key: action.key, value: action.value, seqno: state.backend.nextSeqno };
+      const named = state.backend.items.get(action.namespace) || IMap();
+      const updated = state.backend.items.set(action.namespace, named.set(action.key, entry));
+      return {
+        ...state,
+        backend: {nextSeqno: state.backend.nextSeqno + 1, items: updated},
+      };
+    }
+    case 'jump': {
+      return {
+        ...state,
+        client: {...state.client, startedSeqno: state.backend.nextSeqno, nextSeqno: state.backend.nextSeqno},
+      }
     }
   }
 }
@@ -104,6 +134,15 @@ const NamespaceWrapper = styled.div`
   border-radius: 20px;
   margin: 8px;
   padding: 8px;
+`;
+
+const SeqnoWrapper = styled.sub`
+  color: gray;
+`;
+
+const ClientWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
 `;
 
 export default App;
