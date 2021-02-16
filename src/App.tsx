@@ -68,7 +68,7 @@ const Backend: React.FC<BackendProps> = ({ state, dispatch }) => {
     <BackendWrapper>
       <EntryInput onSubmit={dispatch} />
       <NamespacesWrapper>
-        {state.items.entrySeq().map(([name, obj]) => (
+        {state.items.entrySeq().sortBy(([name]) => name).map(([name, obj]) => (
           <Namespace key={name} name={name} obj={obj} />
         ))}
       </NamespacesWrapper>
@@ -81,18 +81,31 @@ interface NamespaceProps {
   readonly obj: IMap<string, Entry>;
 }
 const Namespace: React.FC<NamespaceProps> = ({ name, obj }) => {
+  const createdAt = obj.first<null>()!.createdAt;
   return (
     <NamespaceWrapper>
-      <b>{name}</b>
-      <SeqnoWrapper>{overallSeqno(obj)}</SeqnoWrapper>
+      <NamespaceName lo={createdAt} hi={overallSeqno(obj)} name={name} />
       {obj.entrySeq().map(([key, entry]) => (
-        <div key={key}>
+        <EntryWrapper key={key}>
           {key} = {entry.value}
           <SeqnoWrapper>{entry.seqno}</SeqnoWrapper>
-        </div>
+        </EntryWrapper>
       ))}
     </NamespaceWrapper>
   );
+};
+
+interface NamespaceNameProps {
+  readonly lo: number;
+  readonly hi: number;
+  readonly name: string;
+}
+const NamespaceName: React.FC<NamespaceNameProps> = ({lo, name, hi}) => {
+  return <NamespaceNameWrapper>
+      <SeqnoWrapper>{lo}</SeqnoWrapper>
+      <b>{name}</b>
+      <SeqnoWrapper>{hi}</SeqnoWrapper>
+  </NamespaceNameWrapper>;
 };
 
 interface ClientProps {
@@ -119,7 +132,7 @@ const Client: React.FC<ClientProps> = ({ state, dispatch }) => {
         startedSeqno={state.startedSeqno}
       />
       <NamespacesWrapper>
-        {state.items.entrySeq().map(([name, obj]) => (
+        {state.items.entrySeq().sortBy(([name]) => name).map(([name, obj]) => (
           <Namespace key={name} name={name} obj={obj} />
         ))}
       </NamespacesWrapper>
@@ -143,15 +156,18 @@ const PendingUpdates: React.FC<PendingUpdatesProps> = ({
       <ul>
         {entries.map((entry) => {
           const item = items.get(entry.namespace);
-          const color = !item
-            ? "red"
-            : overallSeqno(item) < startedSeqno
-            ? "orange"
-            : "green";
+          let color;
+          if (entry.createdAt >= startedSeqno) {
+            color = "green";
+          } else if (item) {
+            color = overallSeqno(item) < startedSeqno ? "orange" : "green";
+          } else {
+            color = "red"
+          }
           const fqn = `${entry.namespace}/${entry.key}`;
           return (
             <li key={fqn} style={{ color }}>
-              {fqn} = {entry.value}
+              {fqn} = <SeqnoWrapper>{entry.createdAt}</SeqnoWrapper>{entry.value}
               <SeqnoWrapper>{entry.seqno}</SeqnoWrapper>
             </li>
           );
@@ -180,6 +196,7 @@ interface Entry {
   readonly key: string;
   readonly value: string;
   readonly seqno: number;
+  readonly createdAt: number;
 }
 type Obj = IMap<string, Entry>;
 
@@ -214,16 +231,17 @@ const EMPTY_STATE: State = {
 function myReducer(state: State, action: Action): State {
   switch (action.type) {
     case "put_entry": {
+      const item = state.backend.items.get(action.namespace) || IMap();
       const entry: Entry = {
         namespace: action.namespace,
         key: action.key,
         value: action.value,
         seqno: state.backend.nextSeqno,
+        createdAt: item.first<null>()?.createdAt || state.backend.nextSeqno,
       };
-      const named = state.backend.items.get(action.namespace) || IMap();
       const updated = state.backend.items.set(
         action.namespace,
-        named.set(action.key, entry)
+        item.set(action.key, entry)
       );
       return {
         ...state,
@@ -309,6 +327,8 @@ const NamespacesWrapper = styled.div`
 `;
 
 const NamespaceWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
   border: solid 1px black;
   border-radius: 20px;
   margin: 8px;
@@ -335,6 +355,15 @@ const PendingUpdateWrapper = styled.div`
 const EntryInputWrapper = styled.div`
   display: flex;
   flex-direction: row;
+`;
+
+const EntryWrapper = styled.div`
+  align-self: flex-start;
+`;
+
+const NamespaceNameWrapper = styled.div`
+  align-self: center;
+  margin-bottom: 8px;
 `;
 
 const FRUITS = [
@@ -380,12 +409,7 @@ function tool(): string {
 }
 
 function overallSeqno(obj: Obj): number {
-  return (
-    obj
-      .valueSeq()
-      .map((entry) => entry.seqno)
-      .max() || 0
-  );
+  return obj .valueSeq() .map((entry) => entry.seqno) .max()!;
 }
 
 export default App;
