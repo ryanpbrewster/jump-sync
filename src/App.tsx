@@ -1,15 +1,15 @@
-import React, { useCallback, useReducer, useState } from 'react';
+import React, { useReducer, useState } from 'react';
 import './App.css';
 import {Map as IMap} from 'immutable';
 import styled from 'styled-components';
-import { isExpressionWithTypeArguments } from 'typescript';
+import { forEach, groupBy, partition } from 'lodash';
+import { groupCollapsed } from 'console';
 
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(myReducer, EMPTY_STATE);
   return (
     <div className="App">
       <Backend state={state.backend} dispatch={dispatch} />
-      <EntryInput onSubmit={dispatch} />
       <hr />
       <Client state={state.client} dispatch={dispatch} />
     </div>
@@ -31,19 +31,23 @@ const EntryInput: React.FC<EntryInputProps> = ({onSubmit}) => {
       }
     }
   }
-  return <input
-    placeholder="name/key=value"
-    onChange={(evt) => setValue(evt.target.value)}
-    onKeyDown={onKeyDown}
-    value={value}></input>
+  return <EntryInputWrapper>
+    <input
+      placeholder="name/key=value"
+      onChange={(evt) => setValue(evt.target.value)}
+      onKeyDown={onKeyDown}
+      value={value}></input>
+      <button onClick={() => onSubmit({type: 'put_entry', namespace: fruit(), key: animal(), value: tool()})}>random</button>
+    </EntryInputWrapper>;
 };
 
 interface BackendProps {
   readonly state: BackendState;
   readonly dispatch: (action: Action) => void;
 }
-const Backend: React.FC<BackendProps> = ({state}) => {
+const Backend: React.FC<BackendProps> = ({state, dispatch}) => {
   return <BackendWrapper>
+    <EntryInput onSubmit={dispatch} />
     <NamespacesWrapper>
       {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
     </NamespacesWrapper>
@@ -55,10 +59,9 @@ interface NamespaceProps {
   readonly obj: IMap<string, Entry>;
 }
 const Namespace: React.FC<NamespaceProps> = ({name, obj}) => {
-  const overallSeqno = obj.valueSeq().map((entry) => entry.seqno).max();
   return <NamespaceWrapper>
-    <b>{name}</b><SeqnoWrapper>{overallSeqno}</SeqnoWrapper>
-    {obj.entrySeq().map(([key, entry]) => <p key={key}>{key} = {entry.value}<SeqnoWrapper>{entry.seqno}</SeqnoWrapper></p>)}
+    <b>{name}</b><SeqnoWrapper>{overallSeqno(obj)}</SeqnoWrapper>
+    {obj.entrySeq().map(([key, entry]) => <div key={key}>{key} = {entry.value}<SeqnoWrapper>{entry.seqno}</SeqnoWrapper></div>)}
   </NamespaceWrapper>
 };
 
@@ -72,6 +75,7 @@ const Client: React.FC<ClientProps> = ({state, dispatch}) => {
     <button onClick={() => dispatch({type: 'jump'})}>Jump ahead</button>
     <button onClick={() => dispatch({type: 'pull'})}>Pull update</button>
     <button onClick={() => dispatch({type: 'fetch'})}>Fetch pending entities</button>
+    <button onClick={() => dispatch({type: 'apply'})}>Apply pending updates</button>
     <PendingUpdates entries={state.pending} />
     <NamespacesWrapper>
       {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
@@ -87,7 +91,7 @@ const PendingUpdates: React.FC<PendingUpdatesProps> = ({entries}) => {
     Pending:
     <ul>{entries.map((entry) => {
       const fqn = `${entry.namespace}/${entry.key}`;
-      return <li key={fqn}>{fqn} = {entry.value}</li>;
+      return <li key={fqn}>{fqn} = {entry.value}<SeqnoWrapper>{entry.seqno}</SeqnoWrapper></li>;
     })}</ul>
   </PendingUpdateWrapper>
 }
@@ -114,7 +118,7 @@ interface Entry {
 }
 type Obj = IMap<string, Entry>;
 
-type Action = PutEntry | JumpAhead | PullEntry | FetchObjects;
+type Action = PutEntry | JumpAhead | PullEntry | FetchObjects | ApplyUpdates;
 interface PutEntry {
   readonly type: 'put_entry';
   readonly namespace: string;
@@ -129,9 +133,13 @@ interface JumpAhead {
 interface PullEntry {
   readonly type: 'pull';
 }
-// Fetch all the pending objects
+// Fetch all entities referenced by any of the pending updates.
 interface FetchObjects {
   readonly type: 'fetch';
+}
+// Apply all the pending updates.
+interface ApplyUpdates {
+  readonly type: 'apply';
 }
 
 const EMPTY_STATE: State = {
@@ -172,6 +180,27 @@ function myReducer(state: State, action: Action): State {
         client: {...state.client, items: state.client.items.merge(fetched)},
       }
     }
+    case 'apply': {
+      const grouped = groupBy(state.client.pending, (entry) => entry.namespace);
+      const stuck: Entry[] = [];
+      const updated: [string, Obj][] = [];
+      forEach(grouped, (updates, name) => {
+        const item = state.client.items.get(name);
+        if (item && overallSeqno(item) >= state.client.startedSeqno) {
+          updated.push([name, item.merge(updates.map((entry) => [entry.key, entry]))]);
+        } else {
+          stuck.push(...updates);
+        }
+      });
+      return {
+        ...state,
+        client: {
+          ...state.client,
+          items: state.client.items.merge(updated),
+          pending: stuck,
+        },
+      }
+    }
   }
 }
 
@@ -205,9 +234,32 @@ const ClientWrapper = styled.div`
 `;
 
 const PendingUpdateWrapper = styled.div`
+  text-align: left;
   border: dashed 1px gray;
   padding: 4px;
   border-radius: 4px;
 `;
+
+const EntryInputWrapper = styled.div`
+  display: flex;
+  flex-direction: row;
+`;
+
+const FRUITS = ["apple", "orange", "kiwi", "pineapple", "tomato", "blueberry", "cherry", "melon"];
+const ANIMALS = ["cat", "dog", "bear", "turtle", "zebra", "horse", "ant", "parrot"];
+const TOOLS = ["hammer", "saw", "driver", "bit", "bolt", "screw", "nail", "chisel", "clamp", "vise"];
+function fruit(): string {
+  return FRUITS[Math.floor(FRUITS.length * Math.random())];
+}
+function animal(): string {
+  return ANIMALS[Math.floor(ANIMALS.length * Math.random())];
+}
+function tool(): string {
+  return TOOLS[Math.floor(TOOLS.length * Math.random())];
+}
+
+function overallSeqno(obj: Obj): number {
+  return obj.valueSeq().map((entry) => entry.seqno).max() || 0;
+}
 
 export default App;
