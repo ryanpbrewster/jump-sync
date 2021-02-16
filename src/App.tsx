@@ -2,6 +2,7 @@ import React, { useCallback, useReducer, useState } from 'react';
 import './App.css';
 import {Map as IMap} from 'immutable';
 import styled from 'styled-components';
+import { isExpressionWithTypeArguments } from 'typescript';
 
 const App: React.FC = () => {
   const [state, dispatch] = useReducer(myReducer, EMPTY_STATE);
@@ -64,10 +65,21 @@ interface ClientProps {
 }
 const Client: React.FC<ClientProps> = ({state, dispatch}) => {
   return <ClientWrapper>
-    <p>Client: {state.startedSeqno}..{state.nextSeqno}</p>
+    <p>[{state.startedSeqno}, {state.nextSeqno})</p>
     <button onClick={() => dispatch({type: 'jump'})}>Jump ahead</button>
+    <button disabled={!!state.pending} onClick={() => dispatch({type: 'pull'})}>Pull update</button>
+    <PendingUpdate entry={state.pending} />
   </ClientWrapper>;
 };
+
+interface PendingUpdateProps {
+  readonly entry: Entry | null;
+}
+const PendingUpdate: React.FC<PendingUpdateProps> = ({entry}) => {
+  return <PendingUpdateWrapper>
+    {entry && `${entry.namespace}/${entry.key} = ${entry.value}`}
+  </PendingUpdateWrapper>
+}
 
 interface State {
   readonly backend: BackendState;
@@ -81,6 +93,7 @@ interface ClientState {
   readonly items: IMap<string, IMap<string, Entry>>;
   readonly startedSeqno: number;
   readonly nextSeqno: number;
+  readonly pending: Entry | null;
 }
 interface Entry {
   readonly namespace: string;
@@ -88,20 +101,25 @@ interface Entry {
   readonly value: string;
   readonly seqno: number;
 }
-type Action = PutEntry | JumpAhead;
+type Action = PutEntry | JumpAhead | PullEntry;
 interface PutEntry {
   readonly type: 'put_entry';
   readonly namespace: string;
   readonly key: string;
   readonly value: string;
 }
+// Skip ahead in the update stream.
 interface JumpAhead {
   readonly type: 'jump';
+}
+// Pull a sync entry with seqno >= bound.
+interface PullEntry {
+  readonly type: 'pull';
 }
 
 const EMPTY_STATE: State = {
   backend: {items: IMap(), nextSeqno: 1},
-  client: {items: IMap(), startedSeqno: 0, nextSeqno: 0},
+  client: {items: IMap(), startedSeqno: 1, nextSeqno: 1, pending: null},
 };
 function myReducer(state: State, action: Action): State {
   switch (action.type) {
@@ -117,7 +135,16 @@ function myReducer(state: State, action: Action): State {
     case 'jump': {
       return {
         ...state,
-        client: {...state.client, startedSeqno: state.backend.nextSeqno, nextSeqno: state.backend.nextSeqno},
+        client: {...state.client, startedSeqno: state.backend.nextSeqno, nextSeqno: state.backend.nextSeqno, pending: null},
+      }
+    }
+    case 'pull': {
+      const entries = state.backend.items.valueSeq().flatMap((obj) => obj.valueSeq()).sortBy((entry) => entry.seqno);
+      const item = entries.find((entry) => entry.seqno >= state.client.nextSeqno);
+      if (!item) return state;
+      return {
+        ...state,
+        client: {...state.client, nextSeqno: item.seqno+1, pending: item},
       }
     }
   }
@@ -143,6 +170,13 @@ const SeqnoWrapper = styled.sub`
 const ClientWrapper = styled.div`
   display: flex;
   flex-direction: column;
+  align-items: center;
+`;
+
+const PendingUpdateWrapper = styled.div`
+  border: dashed 1px gray;
+  padding: 4px;
+  border-radius: 4px;
 `;
 
 export default App;
