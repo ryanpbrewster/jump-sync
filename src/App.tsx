@@ -293,10 +293,16 @@ function myReducer(state: State, action: Action): State {
       const updated: [string, Obj][] = [];
       forEach(grouped, (updates, name) => {
         const item = state.client.items.get(name);
+        const createdAt = updates[0].createdAt;
         if (item && overallSeqno(item) >= state.client.startedSeqno) {
           updated.push([
             name,
             item.merge(updates.map((entry) => [entry.key, entry])),
+          ]);
+        } else if (createdAt >= state.client.startedSeqno) {
+          updated.push([
+            name,
+            IMap(updates.map((entry) => [entry.key, entry])),
           ]);
         } else {
           stuck.push(...updates);
@@ -409,7 +415,7 @@ function tool(): string {
 }
 
 function overallSeqno(obj: Obj): number {
-  return obj .valueSeq() .map((entry) => entry.seqno) .max()!;
+  return obj.valueSeq().map((entry) => entry.seqno).max()!;
 }
 
 export default App;
