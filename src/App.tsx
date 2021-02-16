@@ -44,7 +44,9 @@ interface BackendProps {
 }
 const Backend: React.FC<BackendProps> = ({state}) => {
   return <BackendWrapper>
-    {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
+    <NamespacesWrapper>
+      {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
+    </NamespacesWrapper>
   </BackendWrapper>
 };
 
@@ -53,8 +55,9 @@ interface NamespaceProps {
   readonly obj: IMap<string, Entry>;
 }
 const Namespace: React.FC<NamespaceProps> = ({name, obj}) => {
+  const overallSeqno = obj.valueSeq().map((entry) => entry.seqno).max();
   return <NamespaceWrapper>
-    <b>{name}</b>
+    <b>{name}</b><SeqnoWrapper>{overallSeqno}</SeqnoWrapper>
     {obj.entrySeq().map(([key, entry]) => <p key={key}>{key} = {entry.value}<SeqnoWrapper>{entry.seqno}</SeqnoWrapper></p>)}
   </NamespaceWrapper>
 };
@@ -67,17 +70,25 @@ const Client: React.FC<ClientProps> = ({state, dispatch}) => {
   return <ClientWrapper>
     <p>[{state.startedSeqno}, {state.nextSeqno})</p>
     <button onClick={() => dispatch({type: 'jump'})}>Jump ahead</button>
-    <button disabled={!!state.pending} onClick={() => dispatch({type: 'pull'})}>Pull update</button>
-    <PendingUpdate entry={state.pending} />
+    <button onClick={() => dispatch({type: 'pull'})}>Pull update</button>
+    <button onClick={() => dispatch({type: 'fetch'})}>Fetch pending entities</button>
+    <PendingUpdates entries={state.pending} />
+    <NamespacesWrapper>
+      {state.items.entrySeq().map(([name, obj]) => <Namespace key={name} name={name} obj={obj} />)}
+    </NamespacesWrapper>
   </ClientWrapper>;
 };
 
-interface PendingUpdateProps {
-  readonly entry: Entry | null;
+interface PendingUpdatesProps {
+  readonly entries: Entry[];
 }
-const PendingUpdate: React.FC<PendingUpdateProps> = ({entry}) => {
+const PendingUpdates: React.FC<PendingUpdatesProps> = ({entries}) => {
   return <PendingUpdateWrapper>
-    {entry && `${entry.namespace}/${entry.key} = ${entry.value}`}
+    Pending:
+    <ul>{entries.map((entry) => {
+      const fqn = `${entry.namespace}/${entry.key}`;
+      return <li key={fqn}>{fqn} = {entry.value}</li>;
+    })}</ul>
   </PendingUpdateWrapper>
 }
 
@@ -86,14 +97,14 @@ interface State {
   readonly client: ClientState;
 }
 interface BackendState {
-  readonly items: IMap<string, IMap<string, Entry>>;
+  readonly items: IMap<string, Obj>;
   readonly nextSeqno: number;
 }
 interface ClientState {
-  readonly items: IMap<string, IMap<string, Entry>>;
+  readonly items: IMap<string, Obj>;
   readonly startedSeqno: number;
   readonly nextSeqno: number;
-  readonly pending: Entry | null;
+  readonly pending: Entry[];
 }
 interface Entry {
   readonly namespace: string;
@@ -101,7 +112,9 @@ interface Entry {
   readonly value: string;
   readonly seqno: number;
 }
-type Action = PutEntry | JumpAhead | PullEntry;
+type Obj = IMap<string, Entry>;
+
+type Action = PutEntry | JumpAhead | PullEntry | FetchObjects;
 interface PutEntry {
   readonly type: 'put_entry';
   readonly namespace: string;
@@ -116,10 +129,14 @@ interface JumpAhead {
 interface PullEntry {
   readonly type: 'pull';
 }
+// Fetch all the pending objects
+interface FetchObjects {
+  readonly type: 'fetch';
+}
 
 const EMPTY_STATE: State = {
   backend: {items: IMap(), nextSeqno: 1},
-  client: {items: IMap(), startedSeqno: 1, nextSeqno: 1, pending: null},
+  client: {items: IMap(), startedSeqno: 1, nextSeqno: 1, pending: []},
 };
 function myReducer(state: State, action: Action): State {
   switch (action.type) {
@@ -135,7 +152,7 @@ function myReducer(state: State, action: Action): State {
     case 'jump': {
       return {
         ...state,
-        client: {...state.client, startedSeqno: state.backend.nextSeqno, nextSeqno: state.backend.nextSeqno, pending: null},
+        client: {...state.client, startedSeqno: state.backend.nextSeqno, nextSeqno: state.backend.nextSeqno, pending: []},
       }
     }
     case 'pull': {
@@ -144,13 +161,27 @@ function myReducer(state: State, action: Action): State {
       if (!item) return state;
       return {
         ...state,
-        client: {...state.client, nextSeqno: item.seqno+1, pending: item},
+        client: {...state.client, nextSeqno: item.seqno+1, pending: [...state.client.pending, item]},
+      }
+    }
+    case 'fetch': {
+      const names = state.client.pending.map((entry) => entry.namespace);
+      const fetched: IMap<string, Obj> = IMap(names.map((name) => [name, state.backend.items.get(name) || IMap()]));
+      return {
+        ...state,
+        client: {...state.client, items: state.client.items.merge(fetched)},
       }
     }
   }
 }
 
 const BackendWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+`;
+
+const NamespacesWrapper = styled.div`
   display: flex;
   flex-direction: row;
   justify-content: center;
